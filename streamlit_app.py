@@ -4,9 +4,12 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from collections import Counter
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.preprocessing import StandardScaler
 import warnings
 import random
 warnings.filterwarnings('ignore')
@@ -19,6 +22,8 @@ def load_data():
     try:
         # Read the Excel file
         df = pd.read_excel("ToTo.xlsx")
+        # Strip whitespace from column names
+        df.columns = df.columns.str.strip()
         # Convert Date column to datetime
         df['Date'] = pd.to_datetime(df['Date'])
         return df
@@ -51,37 +56,48 @@ def analyze_numbers_by_period(df, year, month=None):
     
     return number_counts, filtered_data
 
-def predict_numbers(df, n_predictions=6, n_sets=5):
-    """Predict multiple sets of numbers based on historical data (6 winning numbers + 1 supplementary)"""
+def predict_numbers(df, n_predictions=6, n_sets=5, filtered_df=None):
+    """Predict multiple sets of numbers based on historical data (6 winning numbers + 1 supplementary)
+    Set 1 uses filtered_df (year/month filtered) if provided, Sets 2-5 use ALL data."""
     if df is None or df.empty:
         return []
     
-    # Use ALL historical data for predictions (ignore year/month filters)
     latest_data = df
     
     # Extract winning numbers for analysis
     winning_number_columns = ['Winning Number 1', '2', '3', '4', '5', '6']
     
-    # Get frequency analysis from the latest year
+    # ALL data frequencies (used by Sets 2-5)
     all_numbers = []
     for col in winning_number_columns:
         all_numbers.extend(latest_data[col].dropna().tolist())
     
     number_counts = Counter(all_numbers)
-    
-    # Get the most frequent numbers from the latest year
     most_frequent = [num for num, count in number_counts.most_common(20)]
+    
+    # Filtered data frequencies for Set 1
+    filtered_data = filtered_df if filtered_df is not None and len(filtered_df) > 0 else latest_data
+    filtered_numbers = []
+    for col in winning_number_columns:
+        filtered_numbers.extend(filtered_data[col].dropna().tolist())
+    filtered_counts = Counter(filtered_numbers)
+    most_frequent_filtered = [num for num, count in filtered_counts.most_common(20)]
     
     # Get least frequent numbers (numbers that appear less often)
     all_possible_numbers = list(range(1, 50))
     least_frequent = [num for num in all_possible_numbers if num not in most_frequent[:15]]
     medium_frequent = [num for num, count in number_counts.most_common(30)[15:]]  # Numbers 16-30 in frequency
     
-    # Analyze supplementary numbers separately
-    supplementary_numbers = latest_data['Supplementary Number'].dropna().tolist()
+    # Analyze supplementary numbers separately (ALL data for Sets 2-5)
+    supplementary_numbers = latest_data['Additional Number'].dropna().tolist()
     supplementary_counts = Counter(supplementary_numbers)
     most_frequent_supplementary = [num for num, count in supplementary_counts.most_common(10)]
     least_frequent_supplementary = [num for num in all_possible_numbers if num not in most_frequent_supplementary[:5]]
+    
+    # Filtered supplementary for Set 1
+    filtered_supp_numbers = filtered_data['Additional Number'].dropna().tolist()
+    filtered_supp_counts = Counter(filtered_supp_numbers)
+    most_frequent_supp_filtered = [num for num, count in filtered_supp_counts.most_common(10)]
     
     # Create features for machine learning
     features = []
@@ -100,7 +116,7 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
             current_draw['4'],
             current_draw['5'],
             current_draw['6'],
-            current_draw['Supplementary Number'],
+            current_draw['Additional Number'],
             current_draw['Low'],
             current_draw['High'],
             current_draw['Odd'],
@@ -124,9 +140,9 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
             
             # Apply distinct probability strategy for each set
             while len(predictions) < n_predictions:
-                if set_num == 0:  # Set 1: Only most frequent (top 15)
-                    if most_frequent:
-                        pred = np.random.choice(most_frequent[:15])
+                if set_num == 0:  # Set 1: Most frequent from selected year
+                    if most_frequent_filtered:
+                        pred = np.random.choice(most_frequent_filtered[:15])
                     else:
                         pred = np.random.randint(1, 50)
                 elif set_num == 1:  # Set 2: 80% from top 20, 20% from others
@@ -157,9 +173,9 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
                 predictions.add(pred)
             
             # Generate supplementary number with distinct strategy
-            if set_num == 0:  # Set 1: Most frequent supplementary
-                if most_frequent_supplementary:
-                    supplementary = most_frequent_supplementary[0]  # Always the most frequent
+            if set_num == 0:  # Set 1: Most frequent supplementary from selected year
+                if most_frequent_supp_filtered:
+                    supplementary = most_frequent_supp_filtered[0]
                 else:
                     supplementary = np.random.randint(1, 50)
             elif set_num == 1:  # Set 2: Top frequent supplementary (2nd-4th)
@@ -236,9 +252,9 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
             
             # Fill remaining positions with frequency-based strategy
             while len(predictions) < n_predictions:
-                if set_num == 0:  # Set 1: Only most frequent (top 15)
-                    if most_frequent:
-                        pred = np.random.choice(most_frequent[:15])
+                if set_num == 0:  # Set 1: Most frequent from selected year
+                    if most_frequent_filtered:
+                        pred = np.random.choice(most_frequent_filtered[:15])
                     else:
                         pred = np.random.randint(1, 50)
                 elif set_num == 1:  # Set 2: 80% from top 20, 20% from medium
@@ -270,9 +286,9 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
             
             # If we don't have enough unique predictions, add some based on set strategy
             while len(predictions) < n_predictions:
-                if set_num == 0:  # Set 1: Only most frequent
-                    if most_frequent:
-                        for num in most_frequent[:15]:
+                if set_num == 0:  # Set 1: Most frequent from selected year
+                    if most_frequent_filtered:
+                        for num in most_frequent_filtered[:15]:
                             if num not in predictions:
                                 predictions.add(num)
                                 break
@@ -318,9 +334,9 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
                     break
             
             # Generate supplementary number with distinct strategy for each set
-            if set_num == 0:  # Set 1: Top 3 most frequent supplementary
-                if most_frequent_supplementary and len(most_frequent_supplementary) >= 3:
-                    supplementary = most_frequent_supplementary[0]  # Always pick #1 most frequent
+            if set_num == 0:  # Set 1: Most frequent supplementary from selected year
+                if most_frequent_supp_filtered:
+                    supplementary = most_frequent_supp_filtered[0]
                 else:
                     supplementary = np.random.randint(1, 50)
             elif set_num == 1:  # Set 2: Top 5 most frequent supplementary
@@ -369,9 +385,9 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
             
             # Generate unique predictions with distinct strategy for each set
             while len(predictions) < n_predictions:
-                if set_num == 0:  # Set 1: Only most frequent (top 15)
-                    if most_frequent:
-                        pred = np.random.choice(most_frequent[:15])
+                if set_num == 0:  # Set 1: Most frequent from selected year
+                    if most_frequent_filtered:
+                        pred = np.random.choice(most_frequent_filtered[:15])
                     else:
                         pred = np.random.randint(1, 50)
                 elif set_num == 1:  # Set 2: 80% from top 20, 20% from others
@@ -402,9 +418,9 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
                 predictions.add(pred)
             
             # Generate supplementary number with same probability strategy
-            if set_num == 0:  # Set 1: Most frequent supplementary
-                if most_frequent_supplementary:
-                    supplementary = np.random.choice(most_frequent_supplementary[:3])
+            if set_num == 0:  # Set 1: Most frequent supplementary from selected year
+                if most_frequent_supp_filtered:
+                    supplementary = np.random.choice(most_frequent_supp_filtered[:3])
                 else:
                     supplementary = np.random.randint(1, 50)
             elif set_num == 1:  # Set 2: 2nd-4th most frequent supplementary
@@ -442,6 +458,269 @@ def predict_numbers(df, n_predictions=6, n_sets=5):
             all_prediction_sets.append(final_set)
         
         return all_prediction_sets
+
+def deduplicate_prediction(pred_row):
+    """Remove duplicate numbers from a prediction row by nudging duplicates to nearest unused value."""
+    used = set()
+    result = []
+    for val in pred_row:
+        v = int(np.clip(np.round(val), 1, 49))
+        if v not in used:
+            used.add(v)
+            result.append(v)
+        else:
+            # Find nearest unused number
+            for offset in range(1, 49):
+                for candidate in [v + offset, v - offset]:
+                    if 1 <= candidate <= 49 and candidate not in used:
+                        used.add(candidate)
+                        result.append(candidate)
+                        break
+                else:
+                    continue
+                break
+    return result
+
+
+def build_rich_features(all_numbers, idx, window=5):
+    """Build rich feature vector using gap analysis, frequency, position stats, and draw statistics."""
+    features = []
+
+    # 1. Raw numbers from last `window` draws (flattened)
+    start = max(0, idx - window)
+    window_data = all_numbers[start:idx]
+    for row in window_data:
+        features.extend(row.tolist())
+    while len(features) < window * 6:
+        features.insert(0, 25)
+
+    # 2. Gap features: draws since each number 1-49 last appeared
+    recent_nums = all_numbers[max(0, idx - 50):idx]
+    for num in range(1, 50):
+        found = False
+        for lookback in range(len(recent_nums) - 1, -1, -1):
+            if num in recent_nums[lookback]:
+                features.append(len(recent_nums) - 1 - lookback)
+                found = True
+                break
+        if not found:
+            features.append(50)
+
+    # 3. Frequency features: how often each number appeared in last 20 draws
+    recent_20 = all_numbers[max(0, idx - 20):idx]
+    freq_counter = Counter()
+    for row in recent_20:
+        freq_counter.update(row.tolist())
+    for num in range(1, 50):
+        features.append(freq_counter.get(num, 0))
+
+    # 4. Per-position frequency in last 20 draws (top 3 per position)
+    for pos in range(6):
+        pos_counter = Counter()
+        for row in recent_20:
+            pos_counter[row[pos]] += 1
+        top3 = pos_counter.most_common(3)
+        for j in range(3):
+            features.append(top3[j][0] if j < len(top3) else 0)
+
+    # 5. Statistics of last 3 draws
+    last3 = all_numbers[max(0, idx - 3):idx]
+    for row in last3:
+        features.extend([
+            np.mean(row), np.std(row),
+            np.max(row) - np.min(row),
+            np.sum(row % 2),
+            np.sum(row <= 25),
+            np.sum(row),
+        ])
+    # Pad to consistent size
+    target_len = window * 6 + 49 + 49 + 18 + 18
+    while len(features) < target_len:
+        features.append(0)
+    return features
+
+
+@st.cache_data(show_spinner=False)
+def run_ml_model_analysis(_df, test_start=4158, test_end=4162, window=5, future_draws=5):
+    """Run multiple ML models using ALL historical data with rich features."""
+    from sklearn.linear_model import BayesianRidge, ElasticNet
+    from sklearn.ensemble import (
+        ExtraTreesRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor
+    )
+
+    df_copy = _df.copy()
+    df_copy['Draw'] = df_copy['Draw'].astype(str).str.strip()
+    valid = df_copy[df_copy['Draw'].apply(lambda x: x.isdigit())].copy()
+    valid['Draw'] = valid['Draw'].astype(int)
+    valid = valid.sort_values('Draw').reset_index(drop=True)
+
+    num_cols = ['Winning Number 1', '2', '3', '4', '5', '6']
+    all_numbers = valid[num_cols].values
+
+    # Training: all draws up to test_start - 1
+    train_end_idx = valid[valid['Draw'] == test_start - 1].index[0]
+
+    X_train, y_train = [], []
+    for idx in range(window, train_end_idx + 1):
+        X_train.append(build_rich_features(all_numbers, idx, window))
+        y_train.append(all_numbers[idx])
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+
+    # Test data
+    test = valid[valid['Draw'].between(test_start, test_end)]
+    test_nums = test[num_cols].values
+    train_display = valid[valid['Draw'].between(test_start - 14, test_start - 1)]
+
+    # Define models: (mode, factory)
+    # 'multi' = native multi-output, 'percol' = train per column
+    model_defs = {
+        'KNN (k=3)': ('multi', lambda: KNeighborsRegressor(n_neighbors=3)),
+        'KNN (k=7)': ('multi', lambda: KNeighborsRegressor(n_neighbors=7)),
+        'KNN (k=11)': ('multi', lambda: KNeighborsRegressor(n_neighbors=11)),
+        'Linear Regression': ('multi', lambda: LinearRegression()),
+        'Ridge': ('multi', lambda: Ridge(alpha=50)),
+        'Lasso': ('percol', lambda: Lasso(alpha=0.1)),
+        'Bayesian Ridge': ('percol', lambda: BayesianRidge()),
+        'Random Forest': ('multi', lambda: RandomForestRegressor(n_estimators=100, random_state=42, max_depth=15, n_jobs=-1)),
+        'ExtraTrees': ('multi', lambda: ExtraTreesRegressor(n_estimators=100, random_state=42, max_depth=15, n_jobs=-1)),
+        'GradBoost': ('percol', lambda: GradientBoostingRegressor(n_estimators=100, max_depth=5, random_state=42)),
+        'HistGradBoost': ('percol', lambda: HistGradientBoostingRegressor(max_iter=100, max_depth=5, random_state=42)),
+    }
+
+    # Pre-build test features (same for all models)
+    test_features = []
+    for ti in range(len(test_nums)):
+        draw_num = test_start + ti
+        idx = valid[valid['Draw'] == draw_num].index[0]
+        test_features.append(build_rich_features(all_numbers, idx, window))
+    X_test_scaled = scaler.transform(np.array(test_features))
+
+    # Evaluate each model: train ONCE, predict all test draws
+    results = {}
+    for name, (mode, model_fn) in model_defs.items():
+        if mode == 'percol':
+            # Train 6 models (one per column), predict all test draws at once
+            trained = []
+            for col_idx in range(6):
+                m = model_fn()
+                m.fit(X_train_scaled, y_train[:, col_idx])
+                trained.append(m)
+            preds_all = []
+            for ti in range(len(test_nums)):
+                pred_row = [trained[c].predict(X_test_scaled[ti:ti+1])[0] for c in range(6)]
+                preds_all.append(deduplicate_prediction(pred_row))
+        else:
+            model = model_fn()
+            model.fit(X_train_scaled, y_train)
+            preds_all = []
+            for ti in range(len(test_nums)):
+                pred = model.predict(X_test_scaled[ti:ti+1])[0]
+                preds_all.append(deduplicate_prediction(pred))
+
+        preds_arr = np.array(preds_all)
+        mae = np.mean(np.abs(preds_arr - test_nums))
+        match_counts = [len(set(preds_all[i]) & set(test_nums[i].tolist())) for i in range(len(test_nums))]
+
+        results[name] = {
+            'predictions': preds_all,
+            'mae': mae,
+            'match_counts': match_counts,
+            'total_matches': sum(match_counts),
+            'avg_matches': np.mean(match_counts),
+        }
+
+    # --- Generate future predictions using ALL data up to test_end ---
+    full_end_idx = valid[valid['Draw'] == test_end].index[0]
+    X_full, y_full = [], []
+    for idx in range(window, full_end_idx + 1):
+        X_full.append(build_rich_features(all_numbers, idx, window))
+        y_full.append(all_numbers[idx])
+    X_full = np.array(X_full)
+    y_full = np.array(y_full)
+    scaler_full = StandardScaler()
+    X_full_scaled = scaler_full.fit_transform(X_full)
+
+    # Pre-build future features using rolling predictions
+    # Each model predicts one draw at a time, appends prediction to history,
+    # then uses updated history for the next draw's features.
+    future_preds = {}
+    raw_preds_for_ensemble = {}
+
+    for name, (mode, model_fn) in model_defs.items():
+        raw = []
+        preds = []
+        # Work on a copy of all_numbers so each model gets fresh history
+        extended_numbers = all_numbers.copy()
+
+        if mode == 'percol':
+            trained = []
+            for col_idx in range(6):
+                m = model_fn()
+                m.fit(X_full_scaled, y_full[:, col_idx])
+                trained.append(m)
+            for draw_idx in range(future_draws):
+                x_feat = build_rich_features(extended_numbers, len(extended_numbers), window)
+                x_scaled = scaler_full.transform([x_feat])
+                raw_row = [np.clip(trained[c].predict(x_scaled)[0], 1, 49) for c in range(6)]
+                raw.append(raw_row)
+                pred_row = sorted(deduplicate_prediction(raw_row))
+                preds.append(pred_row)
+                # Append prediction to history so next draw has different features
+                extended_numbers = np.vstack([extended_numbers, [pred_row]])
+        else:
+            model = model_fn()
+            model.fit(X_full_scaled, y_full)
+            for draw_idx in range(future_draws):
+                x_feat = build_rich_features(extended_numbers, len(extended_numbers), window)
+                x_scaled = scaler_full.transform([x_feat])
+                pred = model.predict(x_scaled)[0]
+                raw_row = [np.clip(p, 1, 49) for p in pred]
+                raw.append(raw_row)
+                pred_row = sorted(deduplicate_prediction(pred))
+                preds.append(pred_row)
+                # Append prediction to history so next draw has different features
+                extended_numbers = np.vstack([extended_numbers, [pred_row]])
+
+        future_preds[name] = preds
+        raw_preds_for_ensemble[name] = np.array(raw)
+
+    # Voting Ensemble: count number frequency across ALL models
+    vote_preds = []
+    for draw_idx in range(future_draws):
+        vote_counter = Counter()
+        for name in future_preds:
+            for n in future_preds[name][draw_idx]:
+                vote_counter[n] += 1
+        top6 = [n for n, _ in vote_counter.most_common(6)]
+        vote_preds.append(sorted(top6))
+    future_preds['Voting Ensemble'] = vote_preds
+
+    # Average Ensemble
+    ensemble_raw = np.mean(list(raw_preds_for_ensemble.values()), axis=0)
+    ensemble_preds = []
+    for i in range(future_draws):
+        row = deduplicate_prediction(ensemble_raw[i])
+        ensemble_preds.append(sorted(row))
+    future_preds['Average Ensemble'] = ensemble_preds
+
+    return {
+        'train': train_display,
+        'test': test,
+        'test_nums': test_nums,
+        'num_cols': num_cols,
+        'results': results,
+        'future_preds': future_preds,
+        'train_start': test_start - 14,
+        'train_end': test_start - 1,
+        'test_start': test_start,
+        'test_end': test_end,
+        'total_training_samples': len(X_train),
+        'num_features': X_train.shape[1],
+    }
+
 
 def main():
     st.title("🎲 ToTo Number Analysis Dashboard")
@@ -486,7 +765,7 @@ def main():
         filtered_df = df[(df['Date'].dt.year == selected_year) & (df['Date'].dt.month == selected_month)]
     
     # Create tabs for different analyses
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Dataset Overview", "📈 Frequency Analysis", "🔮 Number Predictions", "📊 Distribution Analysis"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Dataset Overview", "📈 Frequency Analysis", "🔮 Number Predictions", "📊 Distribution Analysis", "🤖 ML Model Analysis"])
     
     # Tab 1: Dataset Overview
     with tab1:
@@ -530,12 +809,12 @@ def main():
             
             with col4:
                 # Average supplementary number
-                avg_supp = filtered_df['Supplementary Number'].mean()
+                avg_supp = filtered_df['Additional Number'].mean()
                 st.metric("Avg Supplementary #", f"{avg_supp:.1f}")
             
             # Data preview for selected period with pagination
             st.subheader(f"Recent Draws in {period_text}")
-            display_columns = ['Draw', 'Date', 'Winning Number 1', '2', '3', '4', '5', '6', 'Supplementary Number']
+            display_columns = ['Draw', 'Date', 'Winning Number 1', '2', '3', '4', '5', '6', 'Additional Number']
             
             # Calculate pagination
             total_rows = len(filtered_df)
@@ -636,13 +915,12 @@ def main():
     # Tab 3: Number Predictions
     with tab3:
         st.header("🔮 Number Predictions")
-        st.info("Generating 5 prediction sets with **distinct probability strategies** based on **ALL historical data**:\n"
-                "• **Set 1**: 100% most frequent numbers (Top 15 historical winners)\n"
-                "• **Set 2**: 80% frequent + 20% others (Top 20 + alternatives)\n" 
-                "• **Set 3**: 60% frequent + 40% medium/less frequent\n"
-                "• **Set 4**: 30% frequent + 70% less frequent numbers\n"
-                "• **Set 5**: 10% frequent + 90% least frequent numbers\n\n"
-                "**Note:** Predictions use complete dataset regardless of year/month filter to optimize performance.")
+        st.info("Generating 5 prediction sets with **distinct probability strategies**:\n"
+                f"• **Set 1**: 100% most frequent numbers from **selected year** ({selected_year})\n"
+                "• **Set 2**: 80% frequent + 20% others (ALL historical data)\n" 
+                "• **Set 3**: 60% frequent + 40% medium/less frequent (ALL data)\n"
+                "• **Set 4**: 30% frequent + 70% less frequent (ALL data)\n"
+                "• **Set 5**: 10% frequent + 90% least frequent (ALL data)")
         
         # Initialize prediction counter and sets in session state
         if 'prediction_counter' not in st.session_state:
@@ -655,16 +933,15 @@ def main():
                 # Increment counter to trigger regeneration
                 st.session_state.prediction_counter += 1
         
-        # Generate predictions based on counter (regenerates when counter changes)
-        # Use ALL data for predictions (independent of year/month filters)
-        prediction_key = f"predictions_{st.session_state.prediction_counter}"
+        # Generate predictions based on counter and selected year (regenerates when either changes)
+        prediction_key = f"predictions_{st.session_state.prediction_counter}_{selected_year}_{selected_month}"
         if prediction_key not in st.session_state:
             with st.spinner("Generating predictions..."):
                 # Reset random seed for different results
                 import random
                 import time
                 random.seed(int(time.time()) + st.session_state.prediction_counter)
-                st.session_state[prediction_key] = predict_numbers(df)
+                st.session_state[prediction_key] = predict_numbers(df, filtered_df=filtered_df)
         
         # Use current predictions
         prediction_sets = st.session_state[prediction_key]
@@ -694,46 +971,53 @@ def main():
             
             st.markdown("---")
             
-            # Overall analysis
-            st.subheader("📈 Overall Analysis")
+            # Overall analysis based on historical year data
+            st.subheader(f"📈 Overall Analysis — {period_text}")
             
-            # Flatten all predictions for analysis
-            all_predictions = [num for pred_set in prediction_sets for num in pred_set]
+            # Use historical data from the selected year/month for analysis
+            winning_cols_analysis = ['Winning Number 1', '2', '3', '4', '5', '6']
+            hist_numbers = []
+            for col in winning_cols_analysis:
+                hist_numbers.extend(filtered_df[col].dropna().astype(int).tolist())
             
             col1, col2 = st.columns(2)
             
             with col1:
-                # Frequency chart of all predicted numbers
+                # Frequency chart of historical numbers
                 from collections import Counter
-                pred_counts = Counter(all_predictions)
+                hist_counts = Counter(hist_numbers)
                 
-                if pred_counts:
+                if hist_counts:
+                    sorted_counts = dict(sorted(hist_counts.items()))
                     fig_freq = px.bar(
-                        x=list(pred_counts.keys()),
-                        y=list(pred_counts.values()),
-                        title="Frequency of Predicted Numbers Across All Sets",
+                        x=list(sorted_counts.keys()),
+                        y=list(sorted_counts.values()),
+                        title=f"Number Frequency in {period_text} ({len(filtered_df)} draws)",
                         labels={'x': 'Number', 'y': 'Frequency'},
-                        color=list(pred_counts.values()),
+                        color=list(sorted_counts.values()),
                         color_continuous_scale='viridis'
                     )
-                    fig_freq.update_layout(showlegend=False)
+                    fig_freq.update_layout(showlegend=False, xaxis_type='category')
                     st.plotly_chart(fig_freq, use_container_width=True)
             
             with col2:
-                # Overall statistics
+                # Overall statistics from historical data
                 st.write("**Overall Statistics:**")
-                st.write(f"- Total Sets: {len(prediction_sets)}")
-                st.write(f"- Unique Numbers: {len(set(all_predictions))}")
-                st.write(f"- Most Common: {max(pred_counts, key=pred_counts.get)} ({max(pred_counts.values())}x)")
-                st.write(f"- Average Sum: {np.mean([sum(s) for s in prediction_sets]):.1f}")
+                st.write(f"- Total Draws: {len(filtered_df)}")
+                st.write(f"- Unique Numbers Drawn: {len(set(hist_numbers))}")
+                if hist_counts:
+                    most_common_num = max(hist_counts, key=hist_counts.get)
+                    st.write(f"- Most Common: {most_common_num} ({hist_counts[most_common_num]}x)")
+                avg_sum = filtered_df[winning_cols_analysis].sum(axis=1).mean()
+                st.write(f"- Average Sum: {avg_sum:.1f}")
                 
-                # Range distribution across all sets
+                # Range distribution from historical data
                 ranges = {
-                    '1-10': sum(1 for p in all_predictions if 1 <= p <= 10),
-                    '11-20': sum(1 for p in all_predictions if 11 <= p <= 20),
-                    '21-30': sum(1 for p in all_predictions if 21 <= p <= 30),
-                    '31-40': sum(1 for p in all_predictions if 31 <= p <= 40),
-                    '41-49': sum(1 for p in all_predictions if 41 <= p <= 49)
+                    '1-10': sum(1 for p in hist_numbers if 1 <= p <= 10),
+                    '11-20': sum(1 for p in hist_numbers if 11 <= p <= 20),
+                    '21-30': sum(1 for p in hist_numbers if 21 <= p <= 30),
+                    '31-40': sum(1 for p in hist_numbers if 31 <= p <= 40),
+                    '41-49': sum(1 for p in hist_numbers if 41 <= p <= 49)
                 }
                 
                 st.write("**Range Distribution:**")
@@ -805,6 +1089,148 @@ def main():
         else:
             st.warning(f"No data available for {period_text}.")
     
+    # Tab 5: ML Model Analysis
+    with tab5:
+        st.header("🤖 ML Model Analysis")
+        st.info(
+            "Train **11 ML models** on **ALL historical data** (~1800+ draws), validate against draws **4158–4162**, "
+            "then generate future predictions using voting and average ensembles.\n\n"
+            "**Models:** KNN (k=3/7/11), Linear Regression, Ridge, Lasso, Bayesian Ridge, "
+            "Random Forest, ExtraTrees, GradientBoosting, HistGradientBoosting\n\n"
+            "**Features (164):** Last 5 draws, gap analysis (draws since each number appeared), "
+            "frequency in last 20 draws, per-position frequency, draw statistics"
+        )
+
+        with st.spinner("Running ML models (this may take a moment)..."):
+            ml_results = run_ml_model_analysis(df)
+
+        st.caption(f"Training: **{ml_results['total_training_samples']}** samples, **{ml_results['num_features']}** features per sample")
+
+        # --- Training Data (show recent draws for context) ---
+        st.subheader(f"📋 Recent Training Draws (last 14 before test set)")
+        train_display = ml_results['train'][['Draw'] + ml_results['num_cols']].copy()
+        train_display = train_display.reset_index(drop=True)
+        st.dataframe(train_display, use_container_width=True, hide_index=True)
+
+        # --- Validation Data ---
+        st.subheader(f"✅ Validation Data (Draws {ml_results['test_start']}–{ml_results['test_end']})")
+        test_display = ml_results['test'][['Draw'] + ml_results['num_cols']].copy()
+        test_display = test_display.reset_index(drop=True)
+        st.dataframe(test_display, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # --- Model Comparison ---
+        st.subheader("📊 Model Comparison")
+
+        comparison_data = []
+        for name, res in ml_results['results'].items():
+            comparison_data.append({
+                'Model': name,
+                'MAE': round(res['mae'], 2),
+                'Avg Matches/Draw': round(res['avg_matches'], 2),
+                'Total Matches': res['total_matches'],
+            })
+        comp_df = pd.DataFrame(comparison_data).sort_values('Total Matches', ascending=False)
+        st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+        # Bar chart of total matches
+        fig_comp = px.bar(
+            comp_df, x='Model', y='Total Matches',
+            color='MAE', color_continuous_scale='RdYlGn_r',
+            title='Model Performance: Total Number Matches on Validation Set (higher is better)',
+            text='Total Matches'
+        )
+        fig_comp.update_layout(yaxis_title='Total Exact Matches', xaxis_title='')
+        st.plotly_chart(fig_comp, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- Detailed Validation Results ---
+        st.subheader("🔍 Detailed Validation: Predicted vs Actual")
+        selected_model = st.selectbox("Select Model", list(ml_results['results'].keys()))
+
+        res = ml_results['results'][selected_model]
+        test_nums = ml_results['test_nums']
+
+        detail_rows = []
+        for i in range(len(test_nums)):
+            draw_num = ml_results['test_start'] + i
+            pred = sorted(res['predictions'][i])
+            actual = sorted(test_nums[i].tolist())
+            matched = sorted(set(pred) & set(actual))
+            detail_rows.append({
+                'Draw': draw_num,
+                'Predicted': ', '.join(map(str, pred)),
+                'Actual': ', '.join(map(str, actual)),
+                'Matches': ', '.join(map(str, matched)) if matched else '—',
+                'Match Count': f"{len(matched)}/6",
+            })
+        detail_df = pd.DataFrame(detail_rows)
+        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # --- Future Predictions ---
+        last_draw = ml_results['test_end']
+        st.subheader(f"🔮 Future Predictions (Draws {last_draw+1}–{last_draw+5})")
+        st.caption(f"Models trained on ALL historical data ({ml_results['total_training_samples']} samples), then predict the next 5 draws.")
+
+        future_rows = []
+        for name, preds in ml_results['future_preds'].items():
+            for i, pred in enumerate(preds):
+                future_rows.append({
+                    'Model': name,
+                    'Draw': last_draw + 1 + i,
+                    'Num 1': pred[0], 'Num 2': pred[1], 'Num 3': pred[2],
+                    'Num 4': pred[3], 'Num 5': pred[4], 'Num 6': pred[5],
+                })
+
+        future_df = pd.DataFrame(future_rows)
+
+        # Show ensemble first, then individual models
+        model_tabs = list(ml_results['future_preds'].keys())
+        for ens_name in ['Voting Ensemble', 'Average Ensemble']:
+            if ens_name in model_tabs:
+                model_tabs.remove(ens_name)
+                model_tabs.insert(0, ens_name)
+
+        ftabs = st.tabs(model_tabs)
+        for tab_obj, model_name in zip(ftabs, model_tabs):
+            with tab_obj:
+                model_future = future_df[future_df['Model'] == model_name].drop(columns=['Model'])
+                st.dataframe(model_future, use_container_width=True, hide_index=True)
+
+        # Combined heatmap of all model future predictions
+        st.subheader("🗺️ Number Frequency Across All Models' Predictions")
+        all_future_nums = []
+        for preds in ml_results['future_preds'].values():
+            for row in preds:
+                all_future_nums.extend(row)
+        future_counts = Counter(all_future_nums)
+        freq_items = sorted(future_counts.items(), key=lambda x: -x[1])
+
+        fig_future = px.bar(
+            x=[str(n) for n, _ in freq_items],
+            y=[c for _, c in freq_items],
+            title='How Often Each Number Appears Across All Models\' Future Predictions',
+            labels={'x': 'Number', 'y': 'Frequency'},
+            color=[c for _, c in freq_items],
+            color_continuous_scale='viridis'
+        )
+        fig_future.update_layout(showlegend=False, xaxis_type='category')
+        st.plotly_chart(fig_future, use_container_width=True)
+
+        # Quick reference table
+        st.subheader("📌 Quick Reference: Top Predicted Numbers")
+        top_n = min(15, len(freq_items))
+        ref_df = pd.DataFrame([
+            {'Rank': i+1, 'Number': n, 'Appearances': c,
+             'Confidence': f"{c / len(list(ml_results['future_preds'].keys())) / 5 * 100:.0f}%"}
+            for i, (n, c) in enumerate(freq_items[:top_n])
+        ])
+        st.dataframe(ref_df, use_container_width=True, hide_index=True)
+
     st.markdown("---")
     st.info("💡 Note: Predictions are based on historical patterns and should be used for entertainment purposes only.")
 
